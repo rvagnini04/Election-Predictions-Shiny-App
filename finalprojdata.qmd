@@ -1,0 +1,172 @@
+---
+title: "STAT 8796: Final Project Data"
+author: "Rob Vagnini"
+date: "today"
+format: html
+editor: visual
+---
+
+# **GATHERING DATA**
+
+```{r setup}
+library(tidyverse)
+library(rvest)
+library(kableExtra)
+library(lmtest)
+library(ggpattern)
+library(caret)
+library(car)
+```
+
+## Election Result Data
+
+```{r}
+url_electionresults <- "https://www.britannica.com/topic/United-States-Presidential-Election-Results-1788863"
+
+election_results <-
+  url_electionresults |> 
+  read_html() |> 
+  html_nodes("table") |> 
+  pluck(1) |> 
+  html_table() |> 
+  slice(181:205) |> 
+  janitor::clean_names() |> 
+  filter(political_party %in% c("Republican", "Democratic")) |> 
+  mutate(year = as.numeric(year),
+         electoral_votes = as.numeric(word(electoral_votes1, 1)),
+         popular_votes = as.numeric(str_remove_all(popular_votes2,",")),
+         popular_pct = as.numeric(popular_percentage3)) |> 
+  select(year, candidate, political_party, electoral_votes, popular_pct) |> 
+  pivot_wider(id_cols = year,
+              names_from = political_party,
+              values_from = c(candidate, electoral_votes, popular_pct)) |> 
+  janitor::clean_names() |> 
+  mutate(ec_incumbent = ifelse(year %in% c(1996, 2000, 2012, 2016, 2024), (electoral_votes_democratic - electoral_votes_republican), (electoral_votes_republican - electoral_votes_democratic)),
+         mov_incumbent = ifelse(year %in% c(1996, 2000, 2012, 2016, 2024), (popular_pct_democratic - popular_pct_republican), (popular_pct_republican - popular_pct_democratic)),
+         candidate_incumbent = ifelse(year %in% c(1996, 2000, 2012, 2016, 2024), candidate_democratic, candidate_republican),
+         candidate_challenger = ifelse(!year %in% c(1996, 2000, 2012, 2016, 2024), candidate_democratic, candidate_republican),
+         win_ec = ifelse(ec_incumbent > 0, candidate_incumbent, candidate_challenger),
+         win_mov = ifelse(mov_incumbent > 0, candidate_incumbent, candidate_challenger)) |> 
+  select(year, candidate_incumbent, candidate_challenger, ec_incumbent, mov_incumbent, win_ec, win_mov)
+```
+
+## Lichtman's Predictions
+
+```{r}
+# Scraping Tenet Data
+url_lichtman <- "https://en.wikipedia.org/wiki/The_Keys_to_the_White_House#Lichtman's_prediction_record_(1984%E2%80%93present)"
+lichtman_pred <- 
+    url_lichtman |> 
+    read_html() |> 
+    html_nodes("table") |> 
+    pluck(3) |> 
+    html_table() |> 
+    mutate(`False keys` = str_remove_all(`False keys`, "[^0-9]") %>% as.numeric(`False keys`)) |>  
+    janitor::clean_names() |>  
+    mutate(true_keys = 13 - false_keys,
+           lichtman_pred_ec = ifelse(true_keys >= 8, election_results$candidate_incumbent, election_results$candidate_challenger)) |> 
+    rename(year = election) |> 
+    select(year, lichtman_pred_ec)
+```
+
+## Key 1: Net House Votes
+
+```{r}
+url_house <- "https://history.house.gov/Institution/Party-Divisions/Party-Divisions/"
+house <- 
+    url_house %>%
+    read_html() %>%
+    html_nodes("table") %>%
+    pluck(1) %>%
+    html_table() %>% 
+    slice(110:132) %>% 
+    filter(!row_number() == 9) %>% 
+    mutate(year1 = c(1980, 1982, 1984, 1986, 1988, 1990, 1992, 1994, 1996, 1998, 2000, 2002, 2004, 2006, 2008, 2010, 2012, 2014, 2016, 2018, 2020, 2022),
+           dem_party1 = as.numeric(`Pro-Administration`),
+           rep_party1 = as.numeric(`Anti-Administration`)) %>% 
+    select(- (`Congress (Years)` | `# of House Seats` | `Pro-Administration` | `Anti-Administration` | Other | `Del./Res.`)) %>%           mutate(group = ceiling(row_number() / 2),
+           number = row_number() %% 2) %>% 
+    group_by(group) %>% 
+    mutate(dem_party = dem_party1[number == 0] - dem_party1[number == 1],
+           rep_party = rep_party1[number == 0] - rep_party1[number == 1],
+           year = ceiling(year1) + 2) %>% 
+    filter(number == 0) %>% 
+    ungroup() %>% 
+    mutate(incumbent_party_net_votes = ifelse(year %in% c(1996, 2000, 2012, 2016, 2024), dem_party, rep_party)) %>% 
+    select(year, incumbent_party_net_votes)
+```
+
+## Key 4: Approval Rating
+
+```{r}
+approval_rating <- tibble(
+  year = c(1984, 1988, 1992, 1996, 2000, 2004, 2008, 2012, 2016, 2020, 2024),
+  incumbent_approval_rating = c(.58, .51, .34, .54, .57, .48, .25, .51, .57, .46, .41))
+```
+
+## Key 8: Change in GDP Per Capita (Short)
+
+```{r}
+percent_gdp_per_cap_short <- read_csv("GDP_per_capita.csv", skip = 4) |> 
+  filter(`Country Name` == "United States") |> 
+  pivot_longer(cols = `1980`:`2024`,
+               names_to = "year",
+               values_to = "gdp_per_cap") |> 
+  mutate(year = as.numeric(year)) |> 
+  select(year, gdp_per_cap) |> 
+  filter(year %% 4 == 0 | year %% 4 == 3,
+         year > 1980) |> 
+  mutate(percent_change_gdp_per_cap_short = (gdp_per_cap - lag(gdp_per_cap)) / lag(gdp_per_cap)) |> 
+  filter(year %% 4 == 0) |> # percent change is from one pres. election year to the next
+  select(!gdp_per_cap)
+```
+
+## Combining Numerical Key Data, Lichtman Data, and Election Data
+
+```{r}
+numerical_data <- election_results |> 
+  inner_join(house, by = "year") |>
+  inner_join(approval_rating, by = "year") |>
+  inner_join(percent_gdp_per_cap_short, by = "year") |> 
+  inner_join(lichtman_pred, by = "year")
+```
+
+\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_\_
+
+# MODEL BUILDING
+
+## Model 1: Electoral College MOV
+
+```{r}
+model_ec <- lm(ec_incumbent ~ incumbent_approval_rating + incumbent_party_net_votes + percent_change_gdp_per_cap_short, data = numerical_data)
+```
+
+## Model 2: Voting MOV
+
+```{r}
+model_mov <- lm(mov_incumbent ~ incumbent_approval_rating + incumbent_party_net_votes + percent_change_gdp_per_cap_short, data = numerical_data)
+```
+
+## Predicted Model Values
+
+```{r}
+# Predicted EC MOV Incumbent Values
+pred_model_ec <- data.frame(year = seq(1984, 2024, by = 4),
+                            pred_ec_inc = predict(model_ec))
+
+# Predicted Voting MOV Incumbent Values
+pred_model_mov <- data.frame(year = seq(1984, 2024, by = 4),
+                             pred_mov_inc = predict(model_mov))
+
+# Joining Datasets
+full_data <- numerical_data |> 
+  inner_join(pred_model_ec, by = "year") |> 
+  inner_join(pred_model_mov, by = "year") |> 
+  mutate(rob_pred_ec = ifelse(pred_ec_inc > 0, candidate_incumbent, candidate_challenger),
+         rob_pred_mov = ifelse(pred_mov_inc > 0, candidate_incumbent, candidate_challenger),
+         lichtman_ec_correct = ifelse(lichtman_pred_ec == win_ec, "Correct", "Incorrect"),
+         rob_ec_correct = ifelse(rob_pred_ec == win_ec, "Correct", "Incorrect"),
+         rob_mov_correct = ifelse(rob_pred_mov == win_mov, "Correct", "Incorrect"))
+
+saveRDS(full_data, file = "full_data.rds")
+```
