@@ -51,6 +51,7 @@ ui <- fluidPage(
                  h2("Overview"),
                  p(strong("Overarching Question:"), "How accurate are various models aimed at predicting the U.S. presidential election and popular vote winner?"),
                  p("The goal of this Shiny App is to analyze models for predicting the U.S. presidential election winner. This app explores three distinct models, one created by historian Allan Lichtman, and two numerical models I developed. One of my models, along with Lichtman’s, seek to predict the Electoral College margin of victory, while my other numerical model seeks to predict the Popular Vote margin of victory. For all models, the case is a given U.S. presidential election year starting in 1984 to 2024 and the scope of inference is limited to just United States presidential elections. In the various tabs of this app, you can review how my models faired in presidential elections spanning from 1984 to 2024, compare the predictions of Lichtman’s model and my own, and simulate an election outcome by inputting your own data into my models. Have fun exploring!"),
+                 p("To access the data and other code used to create the Shiny app and to create the models, head to my ", a("GitHub website.", href = "https://github.com/rvagnini04/Election-Predictions-Shiny-App/tree/main", target = "_blank")),
                  h2("Definitions"),
                  tags$ul(
                    tags$li(strong("Incumbent party: "), "the political party of the current U.S. president; currently Republican"),
